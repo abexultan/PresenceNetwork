@@ -1,6 +1,7 @@
 import torch.nn as nn
-import torch.functional as F
+import torch.nn.functional as F
 import torch, torchvision
+import math
 
 
 ############################################################
@@ -179,7 +180,7 @@ class FPN(nn.Module):
         p2_out = self.P2_conv1(c2_out) + F.upsample(p3_out, scale_factor=2)
 
         p5_out = self.P5_conv2(p5_out)
-        p4_out = self.P4_conv2(p4_out)
+        p4_out = self.P4_conv2(p4_out) 
         p3_out = self.P3_conv2(p3_out)
         p2_out = self.P2_conv2(p2_out)
 
@@ -188,3 +189,42 @@ class FPN(nn.Module):
         p6_out = self.P6(p5_out)
 
         return [p2_out, p3_out, p4_out, p5_out, p6_out]
+
+
+############################################################
+#  Presence Network Graph
+############################################################
+
+class PresenceNetwork(nn.Module):
+
+    def __init__(self, backbone_architecture):
+        super().__init__()
+        self.backbone = ResNet(architecture=backbone_architecture, stage5=True)
+        C1, C2, C3, C4, C5 = self.backbone.stages()
+        self.FPN = FPN(C1, C2, C3, C4, C5, 256)
+
+    def L1_distance(self, scene, target):
+        # print("Before Mean : {}".format(target.shape))
+        target = target.view((target.shape[0], target.shape[1], target.shape[2] * target.shape[3]))
+        
+        target_vector = torch.mean(target, axis=2)
+        target_vector = target_vector.view((target_vector.shape[0],
+                                           target_vector.shape[1], 1, 1))
+        l1_distance = scene - target_vector
+        return l1_distance
+
+    def forward(self, scene, target):
+        [S2, S3, S4, S5, S6] = self.FPN(scene)
+        [T2, T3, T4, T5, T6] = self.FPN(target)
+        # print(T6.shape)
+        l1_dist = self.L1_distance(scene=S6, target=T6)
+        return l1_dist
+        
+
+
+if __name__ == '__main__':
+    scene_dummy = torch.ones((1, 3, 512, 512)).cuda()
+    target_dummy = torch.ones((1, 3, 96, 96)).cuda()
+    model = PresenceNetwork("resnet50").cuda()
+    out = model(scene_dummy, target_dummy)
+    print("Scene : {}, target : {}, out : {}".format(scene_dummy.shape, target_dummy.shape, out.shape))
