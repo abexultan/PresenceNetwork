@@ -217,7 +217,7 @@ class PresenceNetwork(nn.Module):
         [S2, S3, S4, S5, S6] = self.FPN(scene)
         [T2, T3, T4, T5, T6] = self.FPN(target)
         # print(T6.shape)
-        l1_dist = self.L1_distance(scene=S6, target=T6)
+        l1_dist = self.L1_distance(scene=S2, target=T6)
         return l1_dist
         
 
@@ -226,5 +226,6 @@ if __name__ == '__main__':
     scene_dummy = torch.ones((1, 3, 512, 512)).cuda()
     target_dummy = torch.ones((1, 3, 96, 96)).cuda()
     model = PresenceNetwork("resnet50").cuda()
+    print("Model Initialized...")
     out = model(scene_dummy, target_dummy)
     print("Scene : {}, target : {}, out : {}".format(scene_dummy.shape, target_dummy.shape, out.shape))
