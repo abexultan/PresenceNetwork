@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torch.nn.functional as F
-import torch, torchvision
+import torch
 import math
 
 
@@ -30,12 +30,15 @@ class SamePad2d(nn.Module):
         pad_top = math.floor(pad_along_height / 2)
         pad_right = pad_along_width - pad_left
         pad_bottom = pad_along_height - pad_top
-        return F.pad(input, (pad_left, pad_right, pad_top, pad_bottom), 'constant', 0)
+        return F.pad(input, (pad_left, pad_right, pad_top, pad_bottom),
+                     'constant', 0)
 
     def __repr__(self):
         return self.__class__.__name__
 
+
 class Bottleneck(nn.Module):
+
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1, downsample=None):
@@ -74,6 +77,7 @@ class Bottleneck(nn.Module):
 
         return out
 
+
 class ResNet(nn.Module):
 
     def __init__(self, architecture, stage5=False):
@@ -95,7 +99,8 @@ class ResNet(nn.Module):
         self.C3 = self.make_layer(self.block, 128, self.layers[1], stride=2)
         self.C4 = self.make_layer(self.block, 256, self.layers[2], stride=2)
         if self.stage5:
-            self.C5 = self.make_layer(self.block, 512, self.layers[3], stride=2)
+            self.C5 = self.make_layer(self.block, 512, self.layers[3],
+                                      stride=2)
         else:
             self.C5 = None
 
@@ -107,7 +112,6 @@ class ResNet(nn.Module):
         x = self.C5(x)
         return x
 
-
     def stages(self):
         return [self.C1, self.C2, self.C3, self.C4, self.C5]
 
@@ -117,7 +121,8 @@ class ResNet(nn.Module):
             downsample = nn.Sequential(
                 nn.Conv2d(self.inplanes, planes * block.expansion,
                           kernel_size=1, stride=stride),
-                nn.BatchNorm2d(planes * block.expansion, eps=0.001, momentum=0.01),
+                nn.BatchNorm2d(planes * block.expansion, eps=0.001,
+                               momentum=0.01),
             )
 
         layers = []
@@ -143,25 +148,33 @@ class FPN(nn.Module):
         self.C4 = C4
         self.C5 = C5
         self.P6 = nn.MaxPool2d(kernel_size=1, stride=2)
-        self.P5_conv1 = nn.Conv2d(2048, self.out_channels, kernel_size=1, stride=1)
+        self.P5_conv1 = nn.Conv2d(2048, self.out_channels, kernel_size=1,
+                                  stride=1)
         self.P5_conv2 = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3,
+                      stride=1),
         )
-        self.P4_conv1 =  nn.Conv2d(1024, self.out_channels, kernel_size=1, stride=1)
+        self.P4_conv1 = nn.Conv2d(1024, self.out_channels, kernel_size=1,
+                                  stride=1)
         self.P4_conv2 = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3,
+                      stride=1),
         )
-        self.P3_conv1 = nn.Conv2d(512, self.out_channels, kernel_size=1, stride=1)
+        self.P3_conv1 = nn.Conv2d(512, self.out_channels, kernel_size=1,
+                                  stride=1)
         self.P3_conv2 = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3,
+                      stride=1),
         )
-        self.P2_conv1 = nn.Conv2d(256, self.out_channels, kernel_size=1, stride=1)
+        self.P2_conv1 = nn.Conv2d(256, self.out_channels, kernel_size=1,
+                                  stride=1)
         self.P2_conv2 = nn.Sequential(
             SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3,
+                      stride=1),
         )
 
     def forward(self, x):
@@ -173,14 +186,13 @@ class FPN(nn.Module):
         x = self.C4(x)
         c4_out = x
         x = self.C5(x)
-        c5_out = x
         p5_out = self.P5_conv1(x)
-        p4_out = self.P4_conv1(c4_out) + F.upsample(p5_out, scale_factor=2)
-        p3_out = self.P3_conv1(c3_out) + F.upsample(p4_out, scale_factor=2)
-        p2_out = self.P2_conv1(c2_out) + F.upsample(p3_out, scale_factor=2)
+        p4_out = self.P4_conv1(c4_out) + F.interpolate(p5_out, scale_factor=2)
+        p3_out = self.P3_conv1(c3_out) + F.interpolate(p4_out, scale_factor=2)
+        p2_out = self.P2_conv1(c2_out) + F.interpolate(p3_out, scale_factor=2)
 
         p5_out = self.P5_conv2(p5_out)
-        p4_out = self.P4_conv2(p4_out) 
+        p4_out = self.P4_conv2(p4_out)
         p3_out = self.P3_conv2(p3_out)
         p2_out = self.P2_conv2(p2_out)
 
@@ -202,30 +214,47 @@ class PresenceNetwork(nn.Module):
         self.backbone = ResNet(architecture=backbone_architecture, stage5=True)
         C1, C2, C3, C4, C5 = self.backbone.stages()
         self.FPN = FPN(C1, C2, C3, C4, C5, 256)
+        self.fc = nn.Linear(256, 2)
 
     def L1_distance(self, scene, target):
         # print("Before Mean : {}".format(target.shape))
-        target = target.view((target.shape[0], target.shape[1], target.shape[2] * target.shape[3]))
-        
+        target = target.view((target.shape[0], target.shape[1],
+                              target.shape[2]*target.shape[3]))
+
         target_vector = torch.mean(target, axis=2)
         target_vector = target_vector.view((target_vector.shape[0],
                                            target_vector.shape[1], 1, 1))
         l1_distance = scene - target_vector
         return l1_distance
 
+    def GAP(self, fm):
+        fm = fm.view((fm.shape[0], fm.shape[1],
+                      fm.shape[2]*fm.shape[3]))
+        vector = torch.mean(fm, axis=2)
+        return vector
+
     def forward(self, scene, target):
         [S2, S3, S4, S5, S6] = self.FPN(scene)
         [T2, T3, T4, T5, T6] = self.FPN(target)
         # print(T6.shape)
-        l1_dist = self.L1_distance(scene=S2, target=T6)
-        return l1_dist
-        
+        l1_dist = self.L1_distance(scene=S2, target=T2)
+        vector = self.GAP(l1_dist)
+        out = self.fc(vector)
+        return out
 
 
 if __name__ == '__main__':
+
+    def init_weights(m):
+        torch.nn.init.xavier_uniform_(m.weight)
+
     scene_dummy = torch.ones((1, 3, 512, 512)).cuda()
     target_dummy = torch.ones((1, 3, 96, 96)).cuda()
     model = PresenceNetwork("resnet50").cuda()
+    model.apply(init_weights)
     print("Model Initialized...")
     out = model(scene_dummy, target_dummy)
-    print("Scene : {}, target : {}, out : {}".format(scene_dummy.shape, target_dummy.shape, out.shape))
+    print("Scene : {}, target : {}, out : {}".format(scene_dummy.shape,
+                                                     target_dummy.shape,
+                                                     out.shape))
+    print("Output vector : {}".format(out))
