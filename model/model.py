@@ -106,11 +106,11 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         x = self.C1(x)
-        x = self.C2(x)
-        x = self.C3(x)
-        x = self.C4(x)
-        x = self.C5(x)
-        return x
+        C2_out = self.C2(x)
+        C3_out = self.C3(C2_out)
+        C4_out = self.C4(C3_out)
+        C5_out = self.C5(C4_out)
+        return C2_out, C3_out, C4_out, C5_out
 
     def stages(self):
         return [self.C1, self.C2, self.C3, self.C4, self.C5]
@@ -216,16 +216,14 @@ class PresenceNetwork(nn.Module):
         self.FPN = FPN(C1, C2, C3, C4, C5, 256)
         self.fc = nn.Linear(256, 2)
 
-    def L1_distance(self, scene, target):
+    def similarity(self, scene, target):
         # print("Before Mean : {}".format(target.shape))
-        target = target.view((target.shape[0], target.shape[1],
-                              target.shape[2]*target.shape[3]))
-
-        target_vector = torch.mean(target, axis=2)
-        target_vector = target_vector.view((target_vector.shape[0],
-                                           target_vector.shape[1], 1, 1))
-        l1_distance = scene - target_vector
-        return l1_distance
+        target_gap = self.GAP(target)
+        target_vector = target_gap.view((target_gap.shape[0],
+                                         target_gap.shape[1], 1, 1))
+        L1_norm = abs(scene - target_vector)
+        similarity = math.exp(-L1_norm)
+        return similarity
 
     def GAP(self, fm):
         fm = fm.view((fm.shape[0], fm.shape[1],
@@ -237,7 +235,7 @@ class PresenceNetwork(nn.Module):
         [S2, S3, S4, S5, S6] = self.FPN(scene)
         [T2, T3, T4, T5, T6] = self.FPN(target)
         # print(T6.shape)
-        l1_dist = self.L1_distance(scene=S2, target=T2)
+        l1_dist = self.similarity(scene=S2, target=T2)
         vector = self.GAP(l1_dist)
         out = self.fc(vector)
         return out
@@ -245,16 +243,20 @@ class PresenceNetwork(nn.Module):
 
 if __name__ == '__main__':
 
-    def init_weights(m):
-        torch.nn.init.xavier_uniform_(m.weight)
+    # def init_weights(m):
+    #     torch.nn.init.xavier_uniform_(m.weight)
 
     scene_dummy = torch.ones((1, 3, 512, 512)).cuda()
     target_dummy = torch.ones((1, 3, 96, 96)).cuda()
-    model = PresenceNetwork("resnet50").cuda()
-    model.apply(init_weights)
+    model = ResNet("resnet50", stage5=True).cuda()
+    # model.apply(init_weights)
     print("Model Initialized...")
-    out = model(scene_dummy, target_dummy)
-    print("Scene : {}, target : {}, out : {}".format(scene_dummy.shape,
-                                                     target_dummy.shape,
-                                                     out.shape))
-    print("Output vector : {}".format(out))
+    C2, C3, C4, C5 = model(scene_dummy)
+    # print("Scene : {}, target : {}, out : {}".format(scene_dummy.shape,
+    #                                                  target_dummy.shape,
+    #                                                  out.shape))
+    # print("Output vector : {}".format(out))
+    print("C2 shape {}".format(C2.shape))
+    print("C3 shape {}".format(C3.shape))
+    print("C4 shape {}".format(C4.shape))
+    print("C5 shape {}".format(C5.shape))
