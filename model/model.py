@@ -209,9 +209,10 @@ class FPN(nn.Module):
 
 class PresenceNetwork(nn.Module):
 
-    def __init__(self, backbone_architecture):
+    def __init__(self, backbone_architecture, stage5):
         super().__init__()
-        self.backbone = ResNet(architecture=backbone_architecture, stage5=True)
+        self.backbone = ResNet(architecture=backbone_architecture,
+                               stage5=stage5)
         C1, C2, C3, C4, C5 = self.backbone.stages()
         self.FPN = FPN(C1, C2, C3, C4, C5, 256)
         self.fc = nn.Linear(256, 2)
@@ -222,7 +223,7 @@ class PresenceNetwork(nn.Module):
         target_vector = target_gap.view((target_gap.shape[0],
                                          target_gap.shape[1], 1, 1))
         L1_norm = abs(scene - target_vector)
-        similarity = math.exp(-L1_norm)
+        similarity = torch.exp(-L1_norm)
         return similarity
 
     def GAP(self, fm):
@@ -248,15 +249,11 @@ if __name__ == '__main__':
 
     scene_dummy = torch.ones((1, 3, 512, 512)).cuda()
     target_dummy = torch.ones((1, 3, 96, 96)).cuda()
-    model = ResNet("resnet50", stage5=True).cuda()
+    model = PresenceNetwork("resnet50", stage5=True).cuda()
     # model.apply(init_weights)
     print("Model Initialized...")
-    C2, C3, C4, C5 = model(scene_dummy)
-    # print("Scene : {}, target : {}, out : {}".format(scene_dummy.shape,
-    #                                                  target_dummy.shape,
-    #                                                  out.shape))
-    # print("Output vector : {}".format(out))
-    print("C2 shape {}".format(C2.shape))
-    print("C3 shape {}".format(C3.shape))
-    print("C4 shape {}".format(C4.shape))
-    print("C5 shape {}".format(C5.shape))
+    out = model(scene_dummy, target_dummy)
+    print("Scene : {}, target : {}, out : {}".format(scene_dummy.shape,
+                                                     target_dummy.shape,
+                                                     out.shape))
+    print("Output vector : {}".format(out))
