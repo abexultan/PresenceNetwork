@@ -1,39 +1,23 @@
 from pycocotools.coco import COCO
-from PIL import Image
+from PIL import Image, ImageEnhance
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import random
 import torch
 from torchvision import transforms
 import pickle
-import cv2 as cv
+from scipy import ndimage
 from skimage.util import random_noise
 
-mean = (.5, .5, .5)
-std = (.5, .5, .5)
-normalize = transforms.Normalize(mean, std)
-
-
-def transform(inp, shape, normalize=False):
-    
-    if type(inp) == np.ndarray:
-        inp_tensor = torch.from_numpy(inp)
-        inp_tensor = inp_tensor.type(torch.FloatTensor)
-    else:
-        inp_tensor = torch.tensor(inp)
-    
-    inp_tensor = inp_tensor.view(shape)
-    
-    if normalize:
-        inp_tensor = normalize(inp_tensor)
-    
-    return inp_tensor
 
 class PresenceDataset(Dataset):
-    
-    augment_dict = {1: "rotate", 2: "shift"}
+    augment_dict = {1: "rotate", 2: "shift",
+                    3: "brightness", 4: "gaussian_noise"}
+    mean = (.5, .5, .5)
+    std = (.5, .5, .5)
+    normalize = transforms.Normalize(mean, std)
 
-    def __init__(self, data_path, annotation_path, norm=normalize):
+    def __init__(self, data_path, annotation_path):
 
         super().__init__()
         self.coco = COCO(annotation_path)
@@ -44,7 +28,6 @@ class PresenceDataset(Dataset):
         self.data_list = self.present_list + self.non_present_list
         self.cats = set(self.coco.getCatIds())
         self.data_path = data_path
-        self.normalize = normalize
         # getting the list of IDs associated with present GT pair
 
     def __len__(self):
@@ -54,7 +37,7 @@ class PresenceDataset(Dataset):
     def __getitem__(self, idx):
 
         img_id = self.data_list[idx]
-        ann_lst = self.coco.getAnnIds(img_id, iscrowd=False, areaRng=[10000, float('inf')])
+        ann_lst = self.coco.getAnnIds(img_id)
 
         if ann_lst is []:
             return None
@@ -82,29 +65,47 @@ class PresenceDataset(Dataset):
             img = np.array(Image.open(''.join([self.data_path, '/',
                                                img_meta['file_name']])))
 
-            img = self.__class__._rescale(img, (512, 512), self.normalize)
-            target = self.__class__._rescale(target, (96, 96), self.normalize)
+            img = self._rescale(img, (512, 512))
+            target = self._rescale(target, (96, 96))
 
             if presence:
-                out = transform([1,0], (1,2), False)
+                out = self.transform([1, 0], (1, 2), False)
             else:
-                out = transform([0,1], (1,2), False)
+                out = self.transform([0, 1], (1, 2), False)
 
             return {"image_pair": (img, target), "presence": out}
 
-    @staticmethod
-    def _rescale(img, shape, normalize):
+    def transform(self, inp, shape, normalize=False):
 
-        img_obj = Image.fromarray(img)
+        if type(inp) == np.ndarray:
+            inp_tensor = torch.from_numpy(inp)
+            inp_tensor = inp_tensor.type(torch.FloatTensor)
+        else:
+            inp_tensor = torch.tensor(inp)
+
+        inp_tensor = inp_tensor.view(shape)
+
+        if normalize:
+            inp_tensor = self.normalize(inp_tensor)
+
+        return inp_tensor
+
+    def _rescale(self, img, shape):
+
+        try:
+            img_obj = Image.fromarray(img)
+        except TypeError:
+            img = (img * 255).astype(np.uint8)
+            img_obj = Image.fromarray(img)
+
         img_obj.thumbnail(size=shape)
         resized_img = Image.new('RGB', shape, 0)
         resized_img.paste(img_obj, ((shape[0] - img_obj.size[0])//2,
                                     (shape[1] - img_obj.size[1])//2))
         resized_img = np.array(resized_img)
-        
-        return transform(resized_img,
-                         (3, shape[0], shape[1]),
-                         normalize)
+
+        return self.transform(resized_img,
+                              (3, shape[0], shape[1]), True)
 
     def _crop_random(self, category_lst, img_id, is_present, idx):
         '''
@@ -127,13 +128,15 @@ class PresenceDataset(Dataset):
         '''
 
         if is_present:
-            ann_ids = self.coco.getAnnIds(imgIds=img_id, areaRng=[64 ** 2, 96 ** 2], iscrowd=False)
-            
-        
-        else: 
+            ann_ids = self.coco.getAnnIds(imgIds=img_id,
+                                          areaRng=[64 ** 2, 96 ** 2],
+                                          iscrowd=False)
+
+        else:
             ann_ids = self.coco.getAnnIds(catIds=category_lst,
-                                          areaRng=[64**2, 96**2], iscrowd=False)
-        
+                                          areaRng=[64 ** 2, 96 ** 2],
+                                          iscrowd=False)
+
         annotation = self.coco.loadAnns(random.choice(ann_ids))[0]
         target_id = annotation['image_id']
 
@@ -145,18 +148,46 @@ class PresenceDataset(Dataset):
         meta = self.coco.loadImgs(target_id)[0]
         arr_img = np.array(Image.open(''.join([self.data_path, '/',
                                                meta['file_name']])))
-        cropped = arr_img[int(y):int(y+h), int(x):int(x+w)]
-        
+
         if is_present:
-            augment_id = random.randint(1,2)
+            augment_id = random.randint(1, 4)
             augment = self.augment_dict[augment_id]
             if augment == "rotate":
-                cropped = cv.rotate(cropped, cv.ROTATE_90_CLOCKWISE)
+                cropped = arr_img[int(y):int(y+h), int(x):int(x+w)]
+                cropped = ndimage.rotate(cropped, 30, reshape=False)
             elif augment == "shift":
                 cropped = arr_img[int(y)+20:int(y+h)+20, int(x):int(x+w)+20]
-            
-            # adding salt and pepper noize
-            cropped = random_noise(cropped)
-                
+            elif augment == "brightness":
+                cropped = arr_img[int(y):int(y+h), int(x):int(x+w)]
+                cropped_obj = Image.fromarray(cropped)
+                enhanced_obj = ImageEnhance.Brightness(cropped_obj).enhance(1.5)
+                cropped = np.array(enhanced_obj)
+            else:
+                cropped = arr_img[int(y):int(y+h), int(x):int(x+w)]
+                cropped = random_noise(cropped)
+
+        else:
+            cropped = arr_img[int(y):int(y+h), int(x):int(x+w)]
 
         return cropped, is_present, area, annotation['category_id']
+
+
+if __name__ == "__main__":
+
+    from tqdm import tqdm
+    dataDir = '/media/cimr/DATA_2/few-shot-object-detection/datasets/coco'
+    TRAIN_IMAGES_DIRECTORY = '{}/train2017/'.format(dataDir)
+    TRAIN_ANNOTATIONS_PATH = '{}/annotations/instances_train2017.json'.\
+                             format(dataDir)
+    dataset = PresenceDataset(TRAIN_IMAGES_DIRECTORY, TRAIN_ANNOTATIONS_PATH)
+    dataset_loader = DataLoader(dataset, batch_size=1,
+                                num_workers=2, shuffle=False)
+
+    for idx, sample in tqdm(enumerate(dataset_loader)):
+        scene, target = sample['image_pair']
+        presence = sample['presence']
+        if idx % 5000 == 0:
+            print("Scene shape {}".format(scene.shape))
+            print("Target shape {}".format(target.shape))
+            print("Presence shape {}".format(presence.shape))
+            print("-"*50)
